@@ -1,0 +1,7 @@
+# Certificates & keys
+*.crt
+*.key
+*.der
+
+# Configuration
+config

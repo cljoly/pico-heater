@@ -82,8 +82,4 @@ def getTemperature() -> float:
 # 3. a function to pass the arguments to
 rpc_table = (("!?", "!?", setHeating), ("", "!f", getTemperature))
 
-# Establish mTLS connection
-
-while True:
-    # Read the TLS socket for RPC commands, decode and call the right function
-    time.sleep(0.5)
+main()
