@@ -1,6 +1,7 @@
 import socket
 import ssl
 import struct
+import time
 
 
 def main():
@@ -22,8 +23,12 @@ def main():
                     cert_reqs=ssl.CERT_REQUIRED,
                 ) as ssl_conn:
                     # ssl_conn.send(b"Hello")
-                    ssl_conn.send(struct.pack("!f", 2))
-                    ssl_conn.send(struct.pack("!f", 3))
+                    ssl_conn.setblocking(True)
+                    ssl_conn.send(struct.pack("!B", 0))
+                    ssl_conn.send(struct.pack("!B", 1))
+                    time.sleep(10)
+                    while True:
+                        print("Read: ", ssl_conn.recv(1))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import time
 import socket
 import ssl
 import struct
-import time
+from collections import namedtuple
 
 HUB_PORT = 4444
 
@@ -14,7 +14,11 @@ def load_file(filename: str, mode: str = "br"):
         return f.read()
 
 
+heater_pin = None
+
+
 def main() -> None:
+    global heater_pin
     heater_pin = machine.Pin(22, machine.Pin.OUT)
     heater_pin.high()
 
@@ -54,9 +58,8 @@ def main() -> None:
     reader = Reader(ssls)
 
     while True:
-        schema = "!f"
-        d = reader.read(struct.calcsize(schema))
-        print("Got:", struct.unpack(schema, d))
+        print("Waiting for a command")
+        run_command(reader, ssls)
 
 
 class Reader:
@@ -66,7 +69,8 @@ class Reader:
 
     def _ensure_buffer_size(self, n: int):
         while len(self.buffer) < n:
-            b = self.reader.read(512)
+            # A bigger size causes the client to hang
+            b = self.reader.read(1)
             if len(b) == 0:
                 time.sleep(0.1)
             else:
@@ -84,7 +88,7 @@ class Reader:
 
 
 # Utils
-def readTemperatureSensor() -> float:
+def read_temperature_sensor() -> float:
     adc = machine.ADC(4)
     voltage = adc.read_u16() * (3.3 / (65536))
     temperature_celcius = 27 - (voltage - 0.706) / 0.001721
@@ -94,20 +98,46 @@ def readTemperatureSensor() -> float:
 
 
 # RPC
-def setHeating(on: bool) -> bool:
-    return False
+def set_heating(on: int) -> tuple[bool]:
+    if on:
+        heater_pin.low()
+        print("Turned heater on.")
+    else:
+        heater_pin.high()
+        print("Turned heater off.")
+    return (1,)
 
 
-def getTemperature() -> float:
-    return readTemperatureSensor()
+def getTemperature() -> tuple[float]:
+    return (read_temperature_sensor(),)
 
 
-# A tuple of:
-# 1. struct schema for arguments
-# 2. struct schema for return type
-# 3. a function to pass the arguments to
-rpc_table = (("!?", "!?", setHeating), ("", "!f", getTemperature))
+Command = namedtuple("Command", ["arg_schema", "arg_return", "fn"])
+commands = (
+    # Command ID: 0
+    Command(arg_schema="!B", arg_return="!B", fn=set_heating),
+    # Command ID: 1
+    Command(arg_schema="", arg_return="!f", fn=getTemperature),
+)
 
-starttime = time.time()
+
+def run_command(reader: Reader, writer) -> None:
+    (command_id,) = reader.read(1)
+    if not 0 <= command_id < len(commands):
+        print("Invalid Command ID, ignoring")
+        return
+    command = commands[command_id]
+    print("Got command", command)
+    arg_size = struct.calcsize(command.arg_schema)
+    raw_args = reader.read(arg_size)
+    args = struct.unpack(command.arg_schema, raw_args)
+    print("with args:", args)
+    ret = command.fn(*args)
+    print("return:", ret)
+    if not isinstance(ret, tuple):
+        raise Exception("Should return tuple")
+    raw_ret = struct.pack(command.arg_return, *ret)
+    writer.write(raw_ret)
+
+
 main()
-print("Took ", time.time() - starttime)
