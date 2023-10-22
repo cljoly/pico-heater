@@ -4,6 +4,7 @@ import time
 import socket
 import ssl
 import struct
+import time
 
 HUB_PORT = 4444
 
@@ -50,12 +51,36 @@ def main() -> None:
         cadata=server_ca,
         cert_reqs=ssl.CERT_REQUIRED,
     )
+    reader = Reader(ssls)
 
     while True:
-        d = ssls.read(512)
-        if not d:
-            return
-        print("Got:", struct.unpack("!f", d))
+        schema = "!f"
+        d = reader.read(struct.calcsize(schema))
+        print("Got:", struct.unpack(schema, d))
+
+
+class Reader:
+    def __init__(self, reader):
+        self.reader = reader
+        self.buffer = b""
+
+    def _ensure_buffer_size(self, n: int):
+        while len(self.buffer) < n:
+            b = self.reader.read(512)
+            if len(b) == 0:
+                time.sleep(0.1)
+            else:
+                self.buffer += b
+
+    def peak(self, n: int):
+        self._ensure_buffer_size(n)
+        return self.buffer[:n]
+
+    def read(self, n: int):
+        self._ensure_buffer_size(n)
+        b = self.buffer[:n]
+        self.buffer = self.buffer[n:]
+        return b
 
 
 # Utils
@@ -83,4 +108,6 @@ def getTemperature() -> float:
 # 3. a function to pass the arguments to
 rpc_table = (("!?", "!?", setHeating), ("", "!f", getTemperature))
 
+starttime = time.time()
 main()
+print("Took ", time.time() - starttime)
