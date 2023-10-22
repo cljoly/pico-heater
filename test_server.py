@@ -1,5 +1,6 @@
 import socket
 import ssl
+import struct
 
 
 def main():
@@ -19,8 +20,9 @@ def main():
                 ca_certs="client.crt",
                 cert_reqs=ssl.CERT_REQUIRED,
             ) as ssl_conn:
-                ssl_conn.send(b"Hello")
+                # ssl_conn.send(b"Hello")
+                ssl_conn.send(struct.pack("!f", 2))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

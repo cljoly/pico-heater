@@ -3,6 +3,7 @@ import network
 import time
 import socket
 import ssl
+import struct
 
 HUB_PORT = 4444
 
@@ -54,7 +55,7 @@ def main() -> None:
         d = ssls.read(512)
         if not d:
             return
-        print("Got:", d)
+        print("Got:", struct.unpack("!f", d))
 
 
 # Utils
