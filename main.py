@@ -1,12 +1,13 @@
 import machine
 import network
 import time
-import socket
-import ssl
-import struct
-from collections import namedtuple
+import ubinascii
+
+from umqtt.simple import MQTTClient
 
 HUB_PORT = 4444
+PICO_ID = ubinascii.hexlify(machine.unique_id())
+OUTPUT_TOPIC = (b"/pico/" + PICO_ID + b"/temp",)
 
 
 def load_file(filename: str, mode: str = "br"):
@@ -20,13 +21,10 @@ heater_pin = None
 def main() -> None:
     global heater_pin
     heater_pin = machine.Pin(22, machine.Pin.OUT)
-    heater_pin.high()
+    heater_pin.high()  # Turn off heater
 
-    client_cert = load_file("client.crt.der")
-    client_key = load_file("client.key.der")
-    server_ca = load_file("server.crt.der")
-    hub_addr, wifi_ap, wifi_password = (
-        load_file("config", "r").strip().split("\n")
+    wifi_ap, wifi_password, hub_addr, mqtt_user, mqtt_password = (
+        load_file("config_mqtt", "r").strip().split("\n")
     )
 
     wlan = network.WLAN()
@@ -43,48 +41,23 @@ def main() -> None:
         print("Waiting for network.")
         time.sleep(1)
 
-    print("Connecting to hub.")
-    s = socket.socket()
-    addr_info = socket.getaddrinfo(hub_addr, HUB_PORT)[0][-1]
-    s.connect(addr_info)
-
-    ssls = ssl.wrap_socket(
-        s,
-        key=client_key,
-        cert=client_cert,
-        cadata=server_ca,
-        cert_reqs=ssl.CERT_REQUIRED,
+    print("Connecting to hub…")
+    c = MQTTClient(
+        "umqtt_client", hub_addr, user=mqtt_user, password=mqtt_password
     )
-    reader = Reader(ssls)
+    c.connect()
+    print("Connected to hub.")
+    cmd_topic = b"/heater/cmd"
+    c.set_callback(mqtt_callback)
+    c.subscribe(cmd_topic)
 
-    while True:
-        print("Waiting for a command")
-        run_command(reader, ssls)
-
-
-class Reader:
-    def __init__(self, reader):
-        self.reader = reader
-        self.buffer = b""
-
-    def _ensure_buffer_size(self, n: int):
-        while len(self.buffer) < n:
-            # A bigger size causes the client to hang
-            b = self.reader.read(1)
-            if len(b) == 0:
-                time.sleep(0.1)
-            else:
-                self.buffer += b
-
-    def peak(self, n: int):
-        self._ensure_buffer_size(n)
-        return self.buffer[:n]
-
-    def read(self, n: int):
-        self._ensure_buffer_size(n)
-        b = self.buffer[:n]
-        self.buffer = self.buffer[n:]
-        return b
+    try:
+        while True:
+            print("Waiting for a command")
+            c.wait_msg()
+            time.sleep(1)
+    finally:
+        c.disconnect()
 
 
 # Utils
@@ -98,6 +71,14 @@ def read_temperature_sensor() -> float:
 
 
 # RPC
+def mqtt_callback(topic: bytes, msg: bytes) -> None:
+    print("Received command:", msg)
+    if msg == b"ON":
+        set_heating(1)
+    elif msg == b"OFF":
+        set_heating(0)
+
+
 def set_heating(on: int) -> tuple[bool]:
     if on:
         heater_pin.low()
@@ -105,39 +86,12 @@ def set_heating(on: int) -> tuple[bool]:
     else:
         heater_pin.high()
         print("Turned heater off.")
-    return (1,)
 
 
-def getTemperature() -> tuple[float]:
-    return (read_temperature_sensor(),)
-
-
-Command = namedtuple("Command", ["arg_schema", "arg_return", "fn"])
-commands = (
-    # Command ID: 0
-    Command(arg_schema="!B", arg_return="!B", fn=set_heating),
-    # Command ID: 1
-    Command(arg_schema="", arg_return="!f", fn=getTemperature),
-)
-
-
-def run_command(reader: Reader, writer) -> None:
-    (command_id,) = reader.read(1)
-    if not 0 <= command_id < len(commands):
-        print("Invalid Command ID, ignoring")
-        return
-    command = commands[command_id]
-    print("Got command", command)
-    arg_size = struct.calcsize(command.arg_schema)
-    raw_args = reader.read(arg_size)
-    args = struct.unpack(command.arg_schema, raw_args)
-    print("with args:", args)
-    ret = command.fn(*args)
-    print("return:", ret)
-    if not isinstance(ret, tuple):
-        raise Exception("Should return tuple")
-    raw_ret = struct.pack(command.arg_return, *ret)
-    writer.write(raw_ret)
+def status(c):
+    # TODO Report temperature
+    # c.publish(OUTPUT_TOPIC, bytes("…", "utf-8"))
+    return
 
 
 main()
