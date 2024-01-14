@@ -55,12 +55,13 @@ def main() -> None:
     timer.init(
         freq=0.025, mode=machine.Timer.PERIODIC, callback=lambda t: status(c)
     )
+    status(c)
 
     try:
         while True:
-            status(c)
             print("Waiting for a command")
             c.wait_msg()
+            status(c)
             time.sleep(1)
     finally:
         c.disconnect()
