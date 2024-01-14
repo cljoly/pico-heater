@@ -7,7 +7,7 @@ from umqtt.simple import MQTTClient
 
 HUB_PORT = 4444
 PICO_ID = ubinascii.hexlify(machine.unique_id())
-OUTPUT_TOPIC = (b"/pico/" + PICO_ID + b"/temp",)
+OUTPUT_TOPIC = b"/heater/status"
 
 
 def load_file(filename: str, mode: str = "br"):
@@ -51,8 +51,14 @@ def main() -> None:
     c.set_callback(mqtt_callback)
     c.subscribe(cmd_topic)
 
+    timer = machine.Timer()
+    timer.init(
+        freq=0.025, mode=machine.Timer.PERIODIC, callback=lambda t: status(c)
+    )
+
     try:
         while True:
+            status(c)
             print("Waiting for a command")
             c.wait_msg()
             time.sleep(1)
@@ -89,9 +95,11 @@ def set_heating(on: int) -> tuple[bool]:
 
 
 def status(c):
-    # TODO Report temperature
-    # c.publish(OUTPUT_TOPIC, bytes("…", "utf-8"))
-    return
+    on_off = b"ON" if heater_pin.value() == 0 else b"OFF"
+    c.publish(
+        OUTPUT_TOPIC,
+        b"".join((b'{"status": "', on_off, b'", "id": "', PICO_ID, b'"}')),
+    )
 
 
 main()
