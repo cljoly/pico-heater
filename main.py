@@ -30,6 +30,7 @@ def main() -> None:
     wlan = network.WLAN()
     wlan.active(True)
     wlan.connect(wifi_ap, wifi_password)
+    connect_attempts = 0
 
     while True:
         wlan_status = wlan.status()
@@ -37,16 +38,22 @@ def main() -> None:
             print(f"Connected to {wifi_ap}.")
             break
 
-        print("No connection yet. Code:", wlan_status)
+        print(f"No connection yet (code: {wlan_status}).")
         print("Waiting for network.")
+
+        connect_attempts += 1
+        if connect_attempts % 10 == 0:
+            wlan.connect(wifi_ap, wifi_password)
+
         time.sleep(1)
 
-    print("Connecting to hub…")
+    print("Connecting to hub…", end="")
     c = MQTTClient(
         "umqtt_client", hub_addr, user=mqtt_user, password=mqtt_password
     )
     c.connect()
-    print("Connected to hub.")
+    print(" connected.")
+
     cmd_topic = b"/heater/cmd"
     c.set_callback(mqtt_callback)
     c.subscribe(cmd_topic)
