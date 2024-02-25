@@ -1,5 +1,7 @@
 # Pico Heater
 
+**Work in progress**
+
 MicroPython program to remotely turn heating on and off.
 - Listens on MQTT topic `/heater/status` for commands
   - `ON` turns the heating ON, untill OFF is received
