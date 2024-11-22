@@ -2,6 +2,7 @@ import machine
 import network
 import time
 import ubinascii
+from machine import WDT
 
 from umqtt.simple import MQTTClient
 
@@ -16,6 +17,7 @@ def load_file(filename: str, mode: str = "br"):
 
 
 heater_pin = None
+wdt = None
 
 led_pin = machine.Pin("LED", machine.Pin.OUT)
 button_on_pin = machine.Pin(20, machine.Pin.IN, machine.Pin.PULL_DOWN)
@@ -24,6 +26,11 @@ button_off_pin = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_DOWN)
 
 def main() -> None:
     global heater_pin
+    global wdt
+    # Ensure we restart if we lose WIFI connection or some other issue (max
+    # value: about 8.3s)
+    wdt = WDT(timeout=8300)
+
     led_blink_timer = machine.Timer()
     led_blink_timer.init(
         freq=2,
@@ -56,8 +63,10 @@ def main() -> None:
         if connect_attempts % 10 == 0:
             wlan.connect(wifi_ap, wifi_password)
 
+        wdt.feed()
         time.sleep(1)
 
+    wdt.feed()
     print("Connecting to hub…", end="")
     c = MQTTClient(
         "umqtt_client", hub_addr, user=mqtt_user, password=mqtt_password
@@ -79,8 +88,8 @@ def main() -> None:
 
     try:
         while True:
-            print("Waiting for a command")
-            c.wait_msg()
+            print("Check for any command")
+            c.check_msg() # Will execute any pending command or return immediately
             status(c)
             time.sleep(1)
     finally:
@@ -133,6 +142,8 @@ def status(c):
         OUTPUT_TOPIC,
         b"".join((b'{"status": "', on_off, b'", "id": "', PICO_ID, b'"}')),
     )
+    print("Feed the watch dog")
+    wdt.feed()
 
 
 main()
