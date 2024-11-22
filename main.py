@@ -17,9 +17,19 @@ def load_file(filename: str, mode: str = "br"):
 
 heater_pin = None
 
+led_pin = machine.Pin("LED", machine.Pin.OUT)
+button_on_pin = machine.Pin(20, machine.Pin.IN, machine.Pin.PULL_DOWN)
+button_off_pin = machine.Pin(21, machine.Pin.IN, machine.Pin.PULL_DOWN)
+
 
 def main() -> None:
     global heater_pin
+    led_blink_timer = machine.Timer()
+    led_blink_timer.init(
+        freq=2,
+        mode=machine.Timer.PERIODIC,
+        callback=lambda t: led_pin.toggle()
+    )
     heater_pin = machine.Pin(22, machine.Pin.OUT)
     heater_pin.high()  # Turn off heater
 
@@ -31,6 +41,7 @@ def main() -> None:
     wlan.active(True)
     wlan.connect(wifi_ap, wifi_password)
     connect_attempts = 0
+
 
     while True:
         wlan_status = wlan.status()
@@ -53,6 +64,8 @@ def main() -> None:
     )
     c.connect()
     print(" connected.")
+    led_blink_timer.deinit()
+    led_pin.value(1)
 
     cmd_topic = b"/heater/cmd"
     c.set_callback(mqtt_callback)
@@ -101,6 +114,18 @@ def set_heating(on: int) -> tuple[bool]:
         heater_pin.high()
         print("Turned heater off.")
 
+def button_pressed(pin, active_value, action) -> None:
+    value = pin.value()
+    if value != active_value:
+        return
+
+    action()
+
+ON_IRQ = lambda p: button_pressed(p, 1, lambda: set_heating(True))
+OFF_IRQ = lambda p: button_pressed(p, 1, lambda: set_heating(False))
+
+button_on_pin.irq(ON_IRQ)
+button_off_pin.irq(OFF_IRQ)
 
 def status(c):
     on_off = b"ON" if heater_pin.value() == 0 else b"OFF"
