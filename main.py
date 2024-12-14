@@ -10,6 +10,9 @@ HUB_PORT = 4444
 PICO_ID = ubinascii.hexlify(machine.unique_id())
 OUTPUT_TOPIC = b"/heater/status"
 
+ON_SAFETY_COUNTER_FREQ = 1/60
+ON_SAFETY_COUNTER_INIT = 3600 * ON_SAFETY_COUNTER_FREQ
+
 
 def load_file(filename: str, mode: str = "br"):
     with open(filename, mode) as f:
@@ -18,6 +21,8 @@ def load_file(filename: str, mode: str = "br"):
 
 heater_pin = None
 wdt = None
+
+on_safety_counter = ON_SAFETY_COUNTER_INIT
 
 led_pin = machine.Pin("LED", machine.Pin.OUT)
 button_on_pin = machine.Pin(20, machine.Pin.IN, machine.Pin.PULL_DOWN)
@@ -33,9 +38,7 @@ def main() -> None:
 
     led_blink_timer = machine.Timer()
     led_blink_timer.init(
-        freq=2,
-        mode=machine.Timer.PERIODIC,
-        callback=lambda t: led_pin.toggle()
+        freq=2, mode=machine.Timer.PERIODIC, callback=lambda t: led_pin.toggle()
     )
     heater_pin = machine.Pin(22, machine.Pin.OUT)
     heater_pin.high()  # Turn off heater
@@ -48,7 +51,6 @@ def main() -> None:
     wlan.active(True)
     wlan.connect(wifi_ap, wifi_password)
     connect_attempts = 0
-
 
     while True:
         wlan_status = wlan.status()
@@ -80,6 +82,13 @@ def main() -> None:
     c.set_callback(mqtt_callback)
     c.subscribe(cmd_topic)
 
+    timer_on_safety_counter = machine.Timer()
+    timer_on_safety_counter.init(
+        freq=ON_SAFETY_COUNTER_FREQ,
+        mode=machine.Timer.PERIODIC,
+        callback=lambda t: watch_on_for_safety(),
+    )
+
     timer = machine.Timer()
     timer.init(
         freq=0.025, mode=machine.Timer.PERIODIC, callback=lambda t: status(c)
@@ -89,7 +98,7 @@ def main() -> None:
     try:
         while True:
             print("Check for any command")
-            c.check_msg() # Will execute any pending command or return immediately
+            c.check_msg()  # Will execute any pending command or return immediately
             status(c)
             time.sleep(1)
     finally:
@@ -116,12 +125,15 @@ def mqtt_callback(topic: bytes, msg: bytes) -> None:
 
 
 def set_heating(on: int) -> tuple[bool]:
+    global on_safety_counter
     if on:
         heater_pin.low()
+        on_safety_counter = ON_SAFETY_COUNTER_INIT
         print("Turned heater on.")
     else:
         heater_pin.high()
         print("Turned heater off.")
+
 
 def button_pressed(pin, active_value, action) -> None:
     value = pin.value()
@@ -130,20 +142,35 @@ def button_pressed(pin, active_value, action) -> None:
 
     action()
 
+
 ON_IRQ = lambda p: button_pressed(p, 1, lambda: set_heating(True))
 OFF_IRQ = lambda p: button_pressed(p, 1, lambda: set_heating(False))
 
 button_on_pin.irq(ON_IRQ)
 button_off_pin.irq(OFF_IRQ)
 
+
 def status(c):
     on_off = b"ON" if heater_pin.value() == 0 else b"OFF"
     c.publish(
         OUTPUT_TOPIC,
         b"".join((b'{"status": "', on_off, b'", "id": "', PICO_ID, b'"}')),
+        retain=True,
     )
     print("Feed the watch dog")
     wdt.feed()
+
+
+# Turn off if we don’t receive ON in a while (for instance, an hour). This ensures the heater
+# doesn’t remain ON by mistake
+def watch_on_for_safety():
+    global on_safety_counter
+    if on_safety_counter > 0:
+        on_safety_counter -= 1
+        print(f"{on_safety_counter=}")
+    else:
+        set_heating(0)
+        print("No message received in a while, turning off")
 
 
 main()
