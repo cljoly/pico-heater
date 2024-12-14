@@ -10,7 +10,7 @@ HUB_PORT = 4444
 PICO_ID = ubinascii.hexlify(machine.unique_id())
 OUTPUT_TOPIC = b"/heater/status"
 
-ON_SAFETY_COUNTER_FREQ = 1/60
+ON_SAFETY_COUNTER_FREQ = 1 / 60
 ON_SAFETY_COUNTER_INIT = 3600 * ON_SAFETY_COUNTER_FREQ
 
 
@@ -71,7 +71,16 @@ def main() -> None:
     wdt.feed()
     print("Connecting to hub…", end="")
     c = MQTTClient(
-        "umqtt_client", hub_addr, user=mqtt_user, password=mqtt_password
+        "umqtt_client",
+        hub_addr,
+        user=mqtt_user,
+        password=mqtt_password,
+    )
+    # Make sure status is reset on disconnect. Must be done before connect
+    c.set_last_will(
+        OUTPUT_TOPIC,
+        craft_status(),
+        retain=True,
     )
     c.connect()
     print(" connected.")
@@ -86,20 +95,26 @@ def main() -> None:
     timer_on_safety_counter.init(
         freq=ON_SAFETY_COUNTER_FREQ,
         mode=machine.Timer.PERIODIC,
-        callback=lambda t: watch_on_for_safety(),
+        callback=lambda t: watch_on_for_safety(c),
     )
 
     timer = machine.Timer()
     timer.init(
-        freq=0.025, mode=machine.Timer.PERIODIC, callback=lambda t: status(c)
+        freq=0.0003,  # About 1 hour
+        mode=machine.Timer.PERIODIC,
+        callback=lambda t: status(c),
     )
     status(c)
 
     try:
         while True:
             print("Check for any command")
-            c.check_msg()  # Will execute any pending command or return immediately
-            status(c)
+            # Will execute any pending command or return immediately
+            op = c.check_msg()
+            wdt.feed()  # check_msg would have failed if we could not reach MQTT
+            if op is not None:
+                # We likely need to update the status
+                status(c)
             time.sleep(1)
     finally:
         c.disconnect()
@@ -150,11 +165,16 @@ button_on_pin.irq(ON_IRQ)
 button_off_pin.irq(OFF_IRQ)
 
 
-def status(c):
+def craft_status():
     on_off = b"ON" if heater_pin.value() == 0 else b"OFF"
+    return b"".join((b'{"status":"', on_off, b'","id":"', PICO_ID, b'"}'))
+
+
+def status(c):
+    msg = craft_status()
     c.publish(
         OUTPUT_TOPIC,
-        b"".join((b'{"status": "', on_off, b'", "id": "', PICO_ID, b'"}')),
+        msg,
         retain=True,
     )
     print("Feed the watch dog")
@@ -163,7 +183,7 @@ def status(c):
 
 # Turn off if we don’t receive ON in a while (for instance, an hour). This ensures the heater
 # doesn’t remain ON by mistake
-def watch_on_for_safety():
+def watch_on_for_safety(c):
     global on_safety_counter
     if on_safety_counter > 0:
         on_safety_counter -= 1
@@ -171,6 +191,7 @@ def watch_on_for_safety():
     else:
         set_heating(0)
         print("No message received in a while, turning off")
+        status(c)
 
 
 main()
